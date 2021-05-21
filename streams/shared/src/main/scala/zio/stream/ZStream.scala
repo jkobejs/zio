@@ -19,7 +19,7 @@ package zio.stream
 import zio._
 import zio.clock.Clock
 import zio.duration._
-import zio.internal.UniqueKey
+import zio.internal.{Executor, UniqueKey}
 import zio.stm.TQueue
 import zio.stream.internal.Utils.zipChunks
 import zio.stream.internal.{ZInputStream, ZReader}
@@ -1923,6 +1923,17 @@ abstract class ZStream[-R, +E, +O](val process: ZManaged[R, Nothing, ZIO[R, Opti
     } yield ()
 
   /**
+   * Locks the execution of this stream to the specified executor. Any streams
+   * that are composed after this one will automatically be shifted back to the
+   * previous executor.
+   */
+  def lock(executor: Executor): ZStream[R, E, O] =
+    ZStream.fromEffect(ZIO.descriptor).flatMap { descriptor =>
+      ZStream.managed(ZManaged.lock(executor)) *>
+        self <* ZStream.fromEffect(ZIO.shift(descriptor.executor))
+    }
+
+  /**
    * Transforms the elements of this stream using the supplied function.
    */
   def map[O2](f: O => O2): ZStream[R, E, O2] =
@@ -2558,8 +2569,8 @@ abstract class ZStream[-R, +E, +O](val process: ZManaged[R, Nothing, ZIO[R, Opti
     foreach(_ => ZIO.unit)
 
   /**
-   * Runs the stream to completion and yields the first value emitted by it,
-   * discarding the rest of the elements.
+   * Runs the stream to collect the first value emitted by it without running
+   * the rest of the stream.
    */
   def runHead: ZIO[R, E, Option[O]] =
     run(ZSink.head)
@@ -3443,6 +3454,14 @@ object ZStream extends ZStreamPlatformSpecificConstructors {
    * Creates a pure stream from a variable list of values
    */
   def apply[A](as: A*): ZStream[Any, Nothing, A] = fromIterable(as)
+
+  /**
+   * Locks the execution of the specified stream to the blocking executor. Any
+   * streams that are composed after this one will automatically be shifted
+   * back to the previous executor.
+   */
+  def blocking[R, E, A](stream: ZStream[R, E, A]): ZStream[R, E, A] =
+    ZStream.fromEffect(ZIO.blockingExecutor).flatMap(stream.lock)
 
   /**
    * Creates a stream from a single value that will get cleaned up after the

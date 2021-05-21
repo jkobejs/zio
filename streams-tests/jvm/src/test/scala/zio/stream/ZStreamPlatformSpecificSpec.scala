@@ -1,7 +1,6 @@
 package zio.stream
 
 import zio._
-import zio.blocking.{Blocking, effectBlockingIO}
 import zio.duration._
 import zio.test.Assertion._
 import zio.test.TestAspect._
@@ -17,8 +16,8 @@ import scala.concurrent.ExecutionContext.global
 
 object ZStreamPlatformSpecificSpec extends ZIOBaseSpec {
 
-  def socketClient(port: Int): ZManaged[Blocking, Throwable, AsynchronousSocketChannel] =
-    ZManaged.make(effectBlockingIO(AsynchronousSocketChannel.open()).flatMap { client =>
+  def socketClient(port: Int): ZManaged[Any, Throwable, AsynchronousSocketChannel] =
+    ZManaged.make(ZIO.effectBlockingIO(AsynchronousSocketChannel.open()).flatMap { client =>
       ZIO
         .fromFutureJava(client.connect(new InetSocketAddress("localhost", port)))
         .map(_ => client)
@@ -185,6 +184,11 @@ object ZStreamPlatformSpecificSpec extends ZIOBaseSpec {
             assert(exit.untraced)(failsCause(containsCause(Cause.interrupt(selfId))))
         }
       ),
+      testM("fromBlockingIterator") {
+        checkM(Gen.small(Gen.chunkOfN(_)(Gen.anyInt)), Gen.small(Gen.const(_), 1)) { (chunk, maxChunkSize) =>
+          assertM(ZStream.fromBlockingIterator(chunk.iterator, maxChunkSize).runCollect)(equalTo(chunk))
+        }
+      },
       suite("fromFile")(
         testM("reads from an existing file") {
           val data = (0 to 100).mkString
